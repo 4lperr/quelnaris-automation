@@ -1,14 +1,18 @@
 """
 script_generator.py — Gemini API ile 16 saniyelik Shorts senaryosu üretir.
-Konu bilgisi alır, JSON formatında senaryo döner.
 
 Özellikler:
-- Model adı otomatik seçilir (kullanılabilir modeller listelenir)
-- 429 rate limit durumunda otomatik bekleyip tekrar dener
-- Model kaldırılsa bile sistem otomatik yeni modele geçer
-- JSON çıktısı sağlam şekilde parse edilir
+- 3 API key rotasyonu (GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3)
+- Model fallback (429/404 durumunda sıradaki modele geçer)
+- Otomatik retry (rate limit durumunda bekleyip tekrar dener)
+- Sağlam JSON parse (birçok formatta çalışır)
+- Boş/eksik yanıt kontrolü
+- Kısmi senaryo tamamlama
+
+Hata vermek yerine alternatifleri dener. Hiçbir ufak hata sistemi durdurmaz.
 """
 
+import os
 import json
 import re
 import time
@@ -20,136 +24,149 @@ logger = setup_logging()
 PROMPTS_PATH = "config/prompts.json"
 STYLE_PATH = "config/style.json"
 
-# Tercih edilen modeller (rate limit'e göre sıralı)
-# gemini-2.5-flash: en stabil, yüksek limit
-# gemini-2.5-flash-lite: hızlı
-# gemini-flash-latest: güncel
+# ─── API KEY LİSTESİ ───────────────────────────────────────
+# 3 anahtar: GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3
+API_KEY_NAMES = [
+    "GEMINI_API_KEY",
+    "GEMINI_API_KEY_2",
+    "GEMINI_API_KEY_3",
+]
+
+# ─── MODEL LİSTESİ (öncelik sırası) ────────────────────────
+# Yeni kullanıcılar için gemini-3.8-flash zorunlu
 PREFERRED_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-3.0-flash",
+    "gemini-3-flash-preview",
     "gemini-flash-latest",
     "gemini-flash-lite-latest",
-    "gemini-3.5-flash",
-    "gemini-3.8-flash",
-    "gemini-3.0-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
     "gemini-pro-latest",
 ]
 
-# Rate limit ayarları
-MAX_RETRIES = 5
-BASE_WAIT_SECONDS = 30
+# ─── RETRY AYARLARI ────────────────────────────────────────
+MAX_RETRIES_PER_KEY = 3
+BASE_WAIT_SECONDS = 20
 
 
-def _extract_error_info(e: Exception) -> dict:
-    """Hatadan 429/rate limit bilgisi çıkarır."""
-    error_str = str(e)
-    is_rate_limit = (
-        "429" in error_str
-        or "ResourceExhausted" in error_str
-        or "quota" in error_str.lower()
-        or "rate" in error_str.lower() and "limit" in error_str.lower()
-    )
-    
-    # Retry delay'i çıkarmaya çalış
-    retry_delay = BASE_WAIT_SECONDS
-    match = re.search(r"retry in (\d+)", error_str)
-    if match:
-        retry_delay = int(match.group(1)) + 5
-    else:
-        match = re.search(r"retry_delay\s*{\s*seconds:\s*(\d+)", error_str)
-        if match:
-            retry_delay = int(match.group(1)) + 5
-    
-    return {
-        "is_rate_limit": is_rate_limit,
-        "retry_delay": retry_delay,
-    }
+# ═══════════════════════════════════════════════════════════
+# API KEY YÖNETİMİ
+# ═══════════════════════════════════════════════════════════
+
+def get_api_keys() -> list:
+    """Tüm mevcut API key'leri toplar (boş olanları atlar)."""
+    keys = []
+    for name in API_KEY_NAMES:
+        key = os.getenv(name, "").strip()
+        if key:
+            keys.append({"name": name, "key": key})
+    if not keys:
+        raise RuntimeError(
+            "Hiçbir Gemini API key bulunamadı. "
+            "GEMINI_API_KEY en az bir tane olmalı."
+        )
+    logger.info(f"{len(keys)} API key bulundu: {[k['name'] for k in keys]}")
+    return keys
 
 
-def pick_model() -> str:
-    """
-    Kullanılabilir modeller arasından en iyisini seçer.
-    1. Tercih listesindekileri dener.
-    2. Yoksa generateContent destekleyen ilk modeli alır.
-    """
-    available = []
+# ═══════════════════════════════════════════════════════════
+# MODEL SEÇİMİ
+# ═══════════════════════════════════════════════════════════
+
+def list_available_models(api_key: str) -> list:
+    """Kullanılabilir modelleri listeler."""
     try:
+        genai.configure(api_key=api_key)
+        available = []
         for m in genai.list_models():
-            # Hem obje hem string dönüşüne uyum sağla
             if isinstance(m, str):
                 name = m.replace("models/", "")
                 methods = ["generateContent"]
             else:
                 name = m.name.replace("models/", "")
                 methods = getattr(m, "supported_generation_methods", []) or []
-            
             if "generateContent" in methods:
                 available.append(name)
+        return available
     except Exception as e:
-        logger.warning(f"Model listesi alınamadı: {e}")
-        return PREFERRED_MODELS[0]
-    
+        logger.warning(f"Model listesi alınamadı: {str(e)[:100]}")
+        return []
+
+
+def pick_models(api_key: str) -> list:
+    """
+    Öncelik sırasına göre model listesi döner.
+    En iyi model başta.
+    """
+    available = list_available_models(api_key)
     logger.info(f"Kullanılabilir modeller: {available[:20]}")
     
-    # Tercih sırasına göre ara
+    # 1. Tercih listesindekiler (available'da olanlar)
+    priority = []
     for preferred in PREFERRED_MODELS:
         if preferred in available:
-            logger.info(f"Model seçildi (tercih): {preferred}")
-            return preferred
+            priority.append(preferred)
     
-    # Tercih listesinde yoksa, "flash" içeren ilk modeli al
+    # 2. Geri kalan flash modeller (görsel/tts hariç)
     for name in available:
-        if "flash" in name.lower() and "image" not in name.lower() and "tts" not in name.lower():
-            logger.info(f"Model seçildi (flash): {name}")
-            return name
+        if name in priority:
+            continue
+        lower = name.lower()
+        if "flash" in lower and "image" not in lower and "tts" not in lower and "audio" not in lower:
+            priority.append(name)
     
-    # Hiçbiri yoksa ilk uygun modeli al
-    if available:
-        logger.warning(f"Tercih edilen model yok, {available[0]} kullanılıyor.")
-        return available[0]
+    # 3. Diğer tüm modeller
+    for name in available:
+        if name not in priority:
+            priority.append(name)
     
-    raise RuntimeError("Kullanılabilir Gemini modeli bulunamadı. API key kontrol et.")
+    # 4. Hiçbiri yoksa varsayılanlar
+    if not priority:
+        priority = PREFERRED_MODELS[:3]
+    
+    logger.info(f"Model öncelik sırası: {priority[:5]}")
+    return priority
 
 
-def configure_gemini():
-    """Gemini API'yi yapılandırır ve uygun modeli döner."""
-    api_key = get_env("GEMINI_API_KEY")
-    genai.configure(api_key=api_key)
-    
-    model_name = pick_model()
-    return genai.GenerativeModel(model_name), model_name
-
+# ═══════════════════════════════════════════════════════════
+# PROMPT OLUŞTURMA
+# ═══════════════════════════════════════════════════════════
 
 def build_prompt(topic: dict, prompts: dict, style: dict) -> str:
     """Konu ve stil bilgisinden prompt üretir."""
     template = prompts["script_generation"]["user_template"]
     
-    # Format string yerine replace kullan (JSON içindeki {} sorun çıkarmasın)
-    # Çift süslü parantez desteği
+    # Çift süslü parantez
     prompt = template.replace("{{topic_title}}", topic.get("title", ""))
     prompt = prompt.replace("{{topic_seed}}", topic.get("seed", ""))
     prompt = prompt.replace("{{topic_source}}", topic.get("source", ""))
     
-    # Tek süslü parantez desteği
+    # Tek süslü parantez
     prompt = prompt.replace("{topic_title}", topic.get("title", ""))
     prompt = prompt.replace("{topic_seed}", topic.get("seed", ""))
     prompt = prompt.replace("{topic_source}", topic.get("source", ""))
     
-    # Stil bilgisini ekle
+    # Stil
     prompt += f"\n\nVisual style: {style.get('prompt_suffix', '')}"
     prompt += f"\nNegative: {style.get('negative_prompt', '')}"
     
     return prompt
 
 
+# ═══════════════════════════════════════════════════════════
+# JSON PARSE
+# ═══════════════════════════════════════════════════════════
+
 def extract_json(text: str) -> dict:
-    """Model çıktısından JSON bloğunu ayıklar."""
+    """Model çıktısından JSON bloğunu sağlam şekilde ayıklar."""
     if not text or not text.strip():
         raise ValueError("Model boş yanıt döndü.")
     
-    # ```json ... ``` bloğunu bul
+    # 1. ```json ... ``` bloğu
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if match:
         try:
@@ -157,13 +174,21 @@ def extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
     
-    # Direkt JSON'u bul (ilk { ile son } arası)
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
+    # 2. İlk { ile son } arası
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start:end + 1]
         try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse hatası: {e}")
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    
+    # 3. Tüm metni JSON olarak dene
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
     
     raise ValueError(f"JSON bulunamadı:\n{text[:500]}")
 
@@ -182,85 +207,177 @@ def validate_script(script: dict) -> dict:
     if not script["title"]:
         script["title"] = "Quelnaris"
     
-    # Toplam kelime kontrolü (40-50 ideal)
+    # Kelime sayısı
     total = " ".join([
-        script["hook"],
-        script["context"],
-        script["climax"],
-        script["outro"],
+        str(script.get("hook", "")),
+        str(script.get("context", "")),
+        str(script.get("climax", "")),
+        str(script.get("outro", "")),
     ])
     word_count = len(total.split())
     
-    if word_count > 60:
+    if word_count > 70:
         logger.warning(f"Senaryo uzun: {word_count} kelime")
-    elif word_count < 30:
+    elif word_count < 25:
         logger.warning(f"Senaryo kısa: {word_count} kelime")
     
     script["_word_count"] = word_count
     return script
 
 
-def _call_gemini_with_retry(model, prompt: str) -> str:
+# ═══════════════════════════════════════════════════════════
+# GEMINI ÇAĞRISI — RETRY + KEY + MODEL ROTASYONU
+# ═══════════════════════════════════════════════════════════
+
+def _error_info(e: Exception) -> dict:
+    """Hatadan bilgi çıkarır: rate limit mi, model yok mu, vs."""
+    error_str = str(e)
+    
+    is_rate_limit = (
+        "429" in error_str
+        or "ResourceExhausted" in error_str
+        or "quota" in error_str.lower()
+        or ("rate" in error_str.lower() and "limit" in error_str.lower())
+    )
+    
+    is_model_not_found = (
+        "404" in error_str
+        or "NotFound" in error_str
+        or "not found" in error_str.lower()
+        or "no longer available" in error_str.lower()
+        or "not supported" in error_str.lower()
+    )
+    
+    is_invalid_key = (
+        "400" in error_str
+        or "API_KEY_INVALID" in error_str
+        or "API key not valid" in error_str
+    )
+    
+    # Retry delay
+    retry_delay = BASE_WAIT_SECONDS
+    match = re.search(r"retry in (\d+)", error_str)
+    if match:
+        retry_delay = int(match.group(1)) + 5
+    else:
+        match = re.search(r"retry_delay\s*{\s*seconds:\s*(\d+)", error_str)
+        if match:
+            retry_delay = int(match.group(1)) + 5
+    
+    return {
+        "is_rate_limit": is_rate_limit,
+        "is_model_not_found": is_model_not_found,
+        "is_invalid_key": is_invalid_key,
+        "retry_delay": retry_delay,
+        "raw": error_str,
+    }
+
+
+def try_generate_with_model(model, prompt: str, model_name: str) -> str:
     """
-    Gemini'yi çağırır. 429 rate limit olursa bekleyip tekrar dener.
+    Tek bir model ile deneme yapar.
+    - Rate limit olursa bekleyip tekrar dener (max 3)
+    - Model yok hatası alırsa None döner (üst katman sıradaki modele geçer)
     """
     last_error = None
     
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(MAX_RETRIES_PER_KEY):
         try:
-            logger.info(f"Gemini çağrısı (deneme {attempt + 1}/{MAX_RETRIES})")
+            logger.info(f"  → Model: {model_name} (deneme {attempt + 1}/{MAX_RETRIES_PER_KEY})")
             response = model.generate_content(prompt)
-            return response.text
+            text = response.text
+            if text and text.strip():
+                return text
+            logger.warning("  ⚠ Boş yanıt, tekrar deneniyor...")
         except Exception as e:
             last_error = e
-            info = _extract_error_info(e)
+            info = _error_info(e)
             
+            # Model yok → hemen üst katmana dön
+            if info["is_model_not_found"]:
+                logger.warning(f"  ⚠ Model kullanılamıyor: {model_name}")
+                return None
+            
+            # Rate limit → bekle, tekrar dene
             if info["is_rate_limit"]:
                 wait = info["retry_delay"] * (attempt + 1)
-                logger.warning(
-                    f"Rate limit (429). {wait}sn bekleyip tekrar denenecek "
-                    f"({attempt + 1}/{MAX_RETRIES})"
-                )
+                logger.warning(f"  ⏱ Rate limit, {wait}sn bekleniyor...")
                 time.sleep(wait)
-            else:
-                # Rate limit değil, direkt hata ver
-                logger.error(f"Gemini hatası (rate limit değil): {e}")
-                raise
+                continue
+            
+            # Diğer hata → kısa bekle, tekrar dene
+            wait = 5 * (attempt + 1)
+            logger.warning(f"  ⚠ Hata: {str(e)[:100]}")
+            logger.warning(f"  ⏱ {wait}sn bekleniyor...")
+            time.sleep(wait)
     
-    logger.error(f"Gemini max retry aşıldı: {last_error}")
-    raise last_error
+    if last_error:
+        logger.warning(f"  ✗ Model {model_name} başarısız: {str(last_error)[:150]}")
+    return None
 
+
+def generate_text_with_fallback(prompt: str) -> str:
+    """
+    Tüm API key + tüm modeller üzerinden dener.
+    İlk başarılı yanıtı döner.
+    """
+    api_keys = get_api_keys()
+    all_errors = []
+    
+    for key_info in api_keys:
+        key_name = key_info["name"]
+        logger.info(f"═══ API Key: {key_name} ═══")
+        
+        try:
+            genai.configure(api_key=key_info["key"])
+        except Exception as e:
+            logger.warning(f"Key {key_name} yapılandırılamadı: {e}")
+            all_errors.append(f"{key_name}: configure error")
+            continue
+        
+        models = pick_models(key_info["key"])
+        
+        for model_name in models:
+            try:
+                model = genai.GenerativeModel(model_name)
+            except Exception as e:
+                logger.warning(f"Model {model_name} oluşturulamadı: {e}")
+                continue
+            
+            text = try_generate_with_model(model, prompt, model_name)
+            
+            if text:
+                logger.info(f"✅ Başarılı: {key_name} + {model_name}")
+                return text
+            
+            all_errors.append(f"{key_name}/{model_name}")
+    
+    raise RuntimeError(
+        f"Hiçbir API key + model kombinasyonu çalışmadı. "
+        f"Denenenler: {all_errors}"
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# ANA FONKSİYON
+# ═══════════════════════════════════════════════════════════
 
 def generate_script(topic: dict) -> dict:
     """
     Ana fonksiyon: Konu alır, senaryo döner.
-    
-    Dönen yapı:
-    {
-        "title": "...",
-        "hook": "...",
-        "context": "...",
-        "climax": "...",
-        "outro": "Follow for more.",
-        "description": "...",
-        "tags": ["..."],
-        "_word_count": 45,
-        "source": "..."
-    }
+    3 API key + model fallback + retry ile hatasız çalışır.
     """
     logger.info(f"Senaryo üretiliyor: {topic.get('title', '?')}")
     
     prompts = load_json(PROMPTS_PATH)
     style = load_json(STYLE_PATH)
-    model, model_name = configure_gemini()
     
     system_prompt = prompts["script_generation"]["system"]
     user_prompt = build_prompt(topic, prompts, style)
-    
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
     
-    # Retry mekanizması ile çağır
-    text = _call_gemini_with_retry(model, full_prompt)
+    # Fallback sistemiyle metni al
+    text = generate_text_with_fallback(full_prompt)
     
     # JSON parse
     try:
@@ -271,27 +388,23 @@ def generate_script(topic: dict) -> dict:
         raise
     
     script = validate_script(script)
-    
-    # Kaynak bilgisini ekle
     script["source"] = topic.get("source", "")
-    script["_model"] = model_name
     
-    logger.info(f"Senaryo hazır: {script['_word_count']} kelime (model: {model_name})")
+    logger.info(f"Senaryo hazır: {script['_word_count']} kelime")
     return script
 
 
 def generate_voiceover_text(script: dict) -> str:
     """Senaryodan seslendirme metnini üretir."""
     return " ".join([
-        script["hook"],
-        script["context"],
-        script["climax"],
-        script["outro"],
+        str(script.get("hook", "")),
+        str(script.get("context", "")),
+        str(script.get("climax", "")),
+        str(script.get("outro", "Follow for more.")),
     ])
 
 
 if __name__ == "__main__":
-    # Test
     test_topic = {
         "id": "test_001",
         "title": "The Cyranoid Experiment",
