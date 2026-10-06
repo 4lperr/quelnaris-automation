@@ -1,0 +1,17 @@
+.env
+client_secret.json
+token.json
+*.key
+__pycache__/
+*.pyc
+.venv/
+venv/
+output/
+logs/
+*.mp4
+*.mp3
+*.wav
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

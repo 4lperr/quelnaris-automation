@@ -1,0 +1,32 @@
+{
+  "channel": "Quelnaris",
+  "slogan": "Every mind has a door.",
+  "colors": {
+    "background": "#0A0A0A",
+    "accent": "#8B0000",
+    "text": "#FFFFFF",
+    "secondary": "#C0C0C0",
+    "purple": "#4C1D95"
+  },
+  "fonts": {
+    "logo": "Cinzel",
+    "title": "Bebas Neue",
+    "subtitle": "Inter",
+    "caption": "Inter"
+  },
+  "visual_style": {
+    "tone": "cinematic, dark, mysterious",
+    "lighting": "low key, deep shadows",
+    "color_grading": "desaturated, blood red accents",
+    "texture": "film grain, subtle smoke",
+    "composition": "centered, minimal, high contrast"
+  },
+  "prompt_suffix": "cinematic, dark, film grain, high contrast, deep blacks, blood red accents, no text, no letters, no words, no 3D, no cartoon, 1080x1920",
+  "negative_prompt": "cartoon, anime, bright colors, pastel, watermark, signature, distorted faces, extra fingers, low contrast, blurry",
+  "captions": {
+    "hook": "0-2s",
+    "context": "2-8s",
+    "climax": "8-14s",
+    "outro": "14-16s"
+  }
+}

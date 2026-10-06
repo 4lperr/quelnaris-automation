@@ -1,0 +1,13 @@
+google-generativeai==0.8.3
+google-genai>=1.0.0
+edge-tts==6.1.12
+elevenlabs==1.9.0
+gTTS==2.5.4
+google-api-python-client==2.149.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+Pillow==11.0.0
+PyYAML==6.0.2
+requests==2.32.3
+python-dotenv==1.0.1
+faster-whisper==1.0.3

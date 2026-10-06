@@ -1,0 +1,87 @@
+channel:
+  name: "Quelnaris"
+  handle: "@Quelnaris"
+  language: "en"
+  country: "TR"
+  category: "Education"
+  made_for_kids: false
+
+schedule:
+  cron: "0 23 * * *"
+  publish_offset_minutes: 180
+
+video:
+  width: 1080
+  height: 1920
+  fps: 30
+  duration_seconds: 16
+  part1_seconds: 8
+  part2_seconds: 8
+  format: "mp4"
+  codec: "libx264"
+  audio_codec: "aac"
+  bitrate: "8M"
+
+ken_burns:
+  zoom_speed: 0.0015
+  max_zoom: 1.5
+  effect: "zoompan"
+
+voice:
+  engine: "edge-tts"
+  voice: "en-US-AriaNeural"
+  rate: "+0%"
+  volume: "+0%"
+  pitch: "+0Hz"
+
+images:
+  provider: "bing"
+  count: 4
+  width: 1080
+  height: 1920
+  style: "cinematic, dark, film grain, high contrast, blood red accents, no text, no letters, no words"
+
+music:
+  source: "assets/music"
+  volume: 0.2
+  fade_in: 1
+  fade_out: 1
+
+subtitles:
+  enabled: true
+  font: "Inter"
+  font_size: 18
+  color: "&HFFFFFF&"
+  outline_color: "&H000000&"
+  outline_width: 2
+  position: "bottom"
+
+youtube:
+  privacy: "public"
+  title_template: "{title}"
+  description_template: |
+    {description}
+    
+    ⚠️ Educational content only. AI-generated visuals.
+    
+    #truecrime #unsolvedmysteries #darkpsychology #mystery #quelnaris
+  tags:
+    - "true crime"
+    - "unsolved mysteries"
+    - "dark psychology"
+    - "mystery"
+    - "psychology"
+    - "shorts"
+    - "quelnaris"
+
+notifications:
+  email:
+    enabled: true
+    to: "alperabdis@gmail.com"
+
+paths:
+  output: "output/"
+  logs: "logs/"
+  assets: "assets/"
+  music: "assets/music/"
+  fonts: "assets/fonts/"

@@ -1,0 +1,36 @@
+name: Test Gemini Image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Gemini
+        run: pip install google-generativeai
+      
+      - name: List image models
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python -c "
+          import google.generativeai as genai
+          import os
+          genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+          models = [m.name for m in genai.list_models()]
+          print('Tüm modeller:')
+          for m in models:
+              print(' -', m)
+          print()
+          print('Görsel üreten modeller:')
+          for m in models:
+              if 'image' in m.name.lower() or 'imagen' in m.name.lower():
+                  print(' ✅', m)
+          "

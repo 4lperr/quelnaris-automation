@@ -1,0 +1,39 @@
+{
+  "script_generation": {
+    "system": "You are a scriptwriter for Quelnaris, a dark psychology and mystery YouTube Shorts channel. You write in English. You are factual, cinematic, and mysterious. You never invent facts. You always cite real sources.",
+    "user_template": "Write a 16-second YouTube Shorts script about: {{topic_title}}\n\nContext: {{topic_seed}}\nSource: {{topic_source}}\n\nStructure:\n- Hook (0-2s): shocking question or statement\n- Context (2-8s): real case, experiment, or mystery with source\n- Climax (8-14s): the most critical reveal\n- Outro (14-16s): 'Follow for more.'\n\nOutput JSON only:\n\n{{\n  \"title\": \"...\",\n  \"hook\": \"...\",\n  \"context\": \"...\",\n  \"climax\": \"...\",\n  \"outro\": \"Follow for more.\",\n  \"description\": \"...\",\n  \"tags\": [\"...\"]\n}}\n\nRules:\n- English only\n- No emojis\n- No hashtags in script\n- Factual, no fabrication\n- 40-50 words total for voiceover\n- Cinematic, mysterious tone"
+  },
+  "visual_generation": {
+    "scenes": [
+      {
+        "scene": 1,
+        "duration": 4,
+        "prompt_template": "Cinematic dark scene for a mystery short: {{hook_visual}}. Deep blacks, blood red accent, film grain, high contrast, moody lighting, shallow depth of field, 9:16 vertical, no text, no people in focus."
+      },
+      {
+        "scene": 2,
+        "duration": 4,
+        "prompt_template": "Cinematic dark scene: {{context_visual}}. Old case file, dimly lit room, film grain, blood red accent, moody, high contrast, 9:16 vertical, no text, no people in focus."
+      },
+      {
+        "scene": 3,
+        "duration": 4,
+        "prompt_template": "Cinematic dark scene: {{climax_visual}}. Extreme close-up, blood red glow, film grain, high contrast, mysterious, 9:16 vertical, no text, no people in focus."
+      },
+      {
+        "scene": 4,
+        "duration": 4,
+        "prompt_template": "Cinematic dark scene: abstract shadow, half-open door with red light, film grain, high contrast, mysterious, 9:16 vertical, no text, no people in focus."
+      }
+    ]
+  },
+  "voice_style": {
+    "tone": "calm, mysterious, cinematic",
+    "pace": "slow, deliberate",
+    "emotion": "neutral with subtle tension"
+  },
+  "thumbnail": {
+    "text_options": ["NOT COVERED?", "UNSOLVED", "DARK MIND", "MISSING", "DON'T OPEN"],
+    "style": "dark background, bold white text, blood red accent, film grain"
+  }
+}
